@@ -1,0 +1,13 @@
+# バックアップファイル
+*.bak
+*.bak2
+*.bak3
+
+# テストデータ（大きなJSONファイル）
+*.json
+
+# MHTMLファイル
+*.mhtml
+
+# macOS
+.DS_Store

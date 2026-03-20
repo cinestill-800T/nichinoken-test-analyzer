@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Nichinoken Test Analyzer</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="container">
+        <h1>📊 日能研テスト結果 分析ツール</h1>
+        
+        <!-- ① ページ検出・取り込みセクション -->
+        <div id="statusArea" class="card">
+            <h2>① データ取り込み</h2>
+            <p id="pageStatus">ページを確認しています...</p>
+            <div id="scrapeResult" style="display: none;">
+                <p><strong>テスト名:</strong> <span id="lblTestName"></span></p>
+                <p><strong>対象教科:</strong> <span id="lblSubject"></span></p>
+                <p><strong>実施日:</strong> <span id="lblExamDate"></span></p>
+                <p><strong>得点:</strong> <span id="lblScore"></span></p>
+                <div id="duplicateWarning" class="alert warning" style="display: none;">
+                    ⚠️ この教科の結果はすでに保存済みです。再取り込みすると上書きされます。
+                </div>
+                <button id="btnImport" class="btn primary">この結果を取り込んで保存</button>
+            </div>
+            <details id="debugSection" style="display: none; margin-top: 10px;">
+                <summary style="cursor: pointer; font-size: 12px; color: #64748b;">🔍 診断ログ（問題発生時にここの内容を共有してください）</summary>
+                <pre id="debugLog" style="font-size: 11px; background: #1e293b; color: #e2e8f0; padding: 10px; border-radius: 6px; overflow-x: auto; max-height: 300px; overflow-y: auto; margin-top: 6px; white-space: pre-wrap; word-break: break-all;"></pre>
+                <button id="btnCopyLog" class="btn small outline" style="margin-top: 6px;">📋 ログをコピー</button>
+            </details>
+        </div>
+
+        <!-- ② ストレージ管理セクション -->
+        <div class="card">
+            <h2>② 蓄積データ管理</h2>
+            <p>保存済み: <strong><span id="lblStoredCount">0</span>件</strong>（期間: <span id="lblDateRange">--</span>）</p>
+            <div class="filter-section">
+                <label>表示期間フィルタ:</label>
+                <div class="filter-row">
+                    <input type="date" id="filterFrom" class="input-date">
+                    <span>〜</span>
+                    <input type="date" id="filterTo" class="input-date">
+                    <button id="btnApplyFilter" class="btn small outline">適用</button>
+                    <button id="btnResetFilter" class="btn small outline">リセット</button>
+                </div>
+            </div>
+            <div class="actions">
+                <button id="btnDownload" class="btn outline">📥 JSONをダウンロード</button>
+                <button id="btnDeleteOld" class="btn warning outline">🗑 古いデータを削除</button>
+                <button id="btnClear" class="btn danger outline">全データクリア</button>
+            </div>
+            <div class="import-section">
+                <p class="hint">※ バックアップしたJSONから復元:</p>
+                <input type="file" id="fileImport" accept=".json">
+            </div>
+        </div>
+
+        <!-- ③ 苦手分析セクション -->
+        <div class="card">
+            <h2>③ 苦手単元ランキング</h2>
+            <div class="tab-bar">
+                <button class="tab active" data-subject="all">全教科</button>
+                <button class="tab" data-subject="国語">国語</button>
+                <button class="tab" data-subject="算数">算数</button>
+                <button class="tab" data-subject="社会">社会</button>
+                <button class="tab" data-subject="理科">理科</button>
+            </div>
+            <div id="weakUnitsList">データがありません。</div>
+        </div>
+
+        <!-- ④ 要注意問題セクション -->
+        <div class="card">
+            <h2>④ 要注意！みんなはできたのに…</h2>
+            <p class="hint">全体正答率が高い（60%以上）のに間違えた問題です。確実に取れるようにしましょう。</p>
+            <div id="criticalMissList">データがありません。</div>
+        </div>
+
+        <!-- ⑤ 苦手克服セクション -->
+        <div class="card">
+            <h2>⑤ 苦手克服トラッカー 🎉</h2>
+            <p class="hint">以前のテストで間違えたのに、最新のテストで正解できた単元です。</p>
+            <div id="recoveryList">データがありません。</div>
+        </div>
+    </div>
+    <script src="popup.js"></script>
+</body>
+</html>
