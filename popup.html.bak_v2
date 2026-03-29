@@ -8,13 +8,12 @@
 <body>
     <div class="container">
         <h1>&#x1F4CA; &#x65E5;&#x80FD;&#x7814;&#x30C6;&#x30B9;&#x30C8;&#x7D50;&#x679C; &#x5206;&#x6790;&#x30C4;&#x30FC;&#x30EB;</h1>
-
-        <!-- ① データ取り込み -->
+        
+        <!-- ① ページ検出・取り込みセクション -->
         <div id="statusArea" class="card">
             <h2>① データ取り込み</h2>
             <p id="pageStatus">ページを確認しています...</p>
-
-            <!-- 問題別回答結果ページ検出時 -->
+            <!-- 問題別結果ページ検出時 -->
             <div id="scrapeResult" style="display: none;">
                 <p><strong>テスト名:</strong> <span id="lblTestName"></span></p>
                 <p><strong>対象教科:</strong> <span id="lblSubject"></span></p>
@@ -25,11 +24,9 @@
                 </div>
                 <button id="btnImport" class="btn primary">この結果を取り込んで保存</button>
             </div>
-
-            <!-- 成績集計ページ検出時（学習力育成テスト / 全国公開模試 共通） -->
+            <!-- 成績集計ページ検出時に表示 -->
             <div id="summaryResult" style="display: none;">
-                <p class="hint summary-hint" id="lblSummaryTypeHint">&#x1F4CB; 成績集計ページを検出しました</p>
-                <p><strong>テスト種別:</strong> <span id="lblSummaryExamType"></span></p>
+                <p class="hint summary-hint">&#x1F4CB; 成績集計ページを検出しました</p>
                 <p><strong>テスト名:</strong> <span id="lblSummaryTestName"></span></p>
                 <p><strong>実施日:</strong> <span id="lblSummaryExamDate"></span></p>
                 <div id="duplicateWarningSummary" class="alert warning" style="display: none;">
@@ -37,7 +34,6 @@
                 </div>
                 <button id="btnImportSummary" class="btn primary">この成績集計を取り込んで保存</button>
             </div>
-
             <details id="debugSection" style="display: none; margin-top: 10px;">
                 <summary style="cursor: pointer; font-size: 12px; color: #64748b;">&#x1F50D; 診断ログ（問題発生時にここの内容を共有してください）</summary>
                 <pre id="debugLog" style="font-size: 11px; background: #1e293b; color: #e2e8f0; padding: 10px; border-radius: 6px; overflow-x: auto; max-height: 300px; overflow-y: auto; margin-top: 6px; white-space: pre-wrap; word-break: break-all;"></pre>
@@ -45,7 +41,7 @@
             </details>
         </div>
 
-        <!-- ② 問題別結果データ管理 -->
+        <!-- ② 問題別結果データ管理セクション -->
         <div class="card">
             <h2>② 問題別結果データ管理</h2>
             <p>保存済み: <strong><span id="lblStoredCount">0</span>件</strong>（期間: <span id="lblDateRange">--</span>）</p>
@@ -70,15 +66,10 @@
             </div>
         </div>
 
-        <!-- ⑥ 成績集計データ管理 -->
+        <!-- ⑥ 成績集計データ管理セクション -->
         <div class="card">
             <h2>&#x2466; 成績集計データ管理</h2>
-            <p>
-                保存済み: <strong><span id="lblSummaryStoredCount">0</span>件</strong>
-                　（育成テスト: <span id="lblTrainingCount">0</span>件
-                　 / 公開模試: <span id="lblPublicCount">0</span>件）
-            </p>
-            <p>期間: <span id="lblSummaryDateRange">--</span></p>
+            <p>保存済み: <strong><span id="lblSummaryStoredCount">0</span>件</strong>（期間: <span id="lblSummaryDateRange">--</span>）</p>
             <div class="actions">
                 <button id="btnDownloadSummary" class="btn outline">&#x1F4E5; 成績集計JSONをダウンロード</button>
                 <button id="btnClearSummary" class="btn danger outline">成績集計データをクリア</button>
@@ -89,7 +80,7 @@
             </div>
         </div>
 
-        <!-- ③ 苦手単元ランキング -->
+        <!-- ③ 苦手分析セクション -->
         <div class="card">
             <h2>③ 苦手単元ランキング</h2>
             <div class="tab-bar">
@@ -102,14 +93,14 @@
             <div id="weakUnitsList">データがありません。</div>
         </div>
 
-        <!-- ④ 要注意問題 -->
+        <!-- ④ 要注意問題セクション -->
         <div class="card">
             <h2>④ 要注意！みんなはできたのに…</h2>
             <p class="hint">全体正答率が高い（60%以上）のに間違えた問題です。確実に取れるようにしましょう。</p>
             <div id="criticalMissList">データがありません。</div>
         </div>
 
-        <!-- ⑤ 苦手克服トラッカー -->
+        <!-- ⑤ 苦手克服セクション -->
         <div class="card">
             <h2>⑤ 苦手克服トラッカー &#x1F389;</h2>
             <p class="hint">以前のテストで間違えたのに、最新のテストで正解できた単元です。</p>
