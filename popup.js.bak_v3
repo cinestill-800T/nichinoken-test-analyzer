@@ -49,44 +49,27 @@ function handleScrapeResponse(response) {
     currentExtractedData = response.data;
     const data = response.data;
 
-    if (data.dataType === 'fieldAccuracyRate') {
-        pageStatus.textContent = `✅ 分野別正答率データを取得しました！`;
-        setbadge('分野別', 'badge-success');
-        
-        document.getElementById('lblTestName').textContent  = "分野別正答率";
-        document.getElementById('lblExamDate').textContent  = data.searchCondition.bracketsText || "--";
-        
-        const cond = data.searchCondition;
-        const condStr = [cond.subject, cond.grade ? cond.grade+"年" : "", cond.term, cond.testType].filter(Boolean).join(" ");
-        document.getElementById('lblSubjects').textContent  = condStr || "--";
-        
-        document.getElementById('lblSummaryStatus').parentElement.querySelector('.result-label').textContent = "データ件数";
-        document.getElementById('lblSummaryStatus').textContent = `✅ ${data.fields.length}行のカテゴリ判定`;
-    } else {
-        const hasSubjects = data.subjects?.length > 0;
-        const hasSummary  = !!data.summary;
+    const hasSubjects = data.subjects?.length > 0;
+    const hasSummary  = !!data.summary;
 
-        if (hasSubjects && hasSummary) {
-            pageStatus.textContent = `✅ テストデータを統合取得しました！`;
-            setbadge('統合取得', 'badge-success');
-        } else if (hasSubjects) {
-            pageStatus.textContent = `✅ 問題別データを取得しました（成績集計なし）`;
-            setbadge('問題別のみ', 'badge-info');
-        } else if (hasSummary) {
-            pageStatus.textContent = `✅ 成績集計データを取得しました`;
-            setbadge('集計のみ', 'badge-info');
-        }
-
-        document.getElementById('lblTestName').textContent  = data.testName || "--";
-        document.getElementById('lblExamDate').textContent  = formatExamDate(data.examDate, data.testDateRaw);
-        document.getElementById('lblSubjects').textContent  = hasSubjects
-            ? data.subjects.map(s => s.score != null ? `${s.subject}(${s.score})` : s.subject).join('、')
-            : "--";
-            
-        document.getElementById('lblSummaryStatus').parentElement.querySelector('.result-label').textContent = "成績集計";
-        document.getElementById('lblSummaryStatus').textContent =
-            hasSummary ? `✅ ${data.summary.examType === 'public' ? '公開模試' : '育成テスト'}` : '❌ なし';
+    if (hasSubjects && hasSummary) {
+        pageStatus.textContent = `✅ テストデータを統合取得しました！`;
+        setbadge('統合取得', 'badge-success');
+    } else if (hasSubjects) {
+        pageStatus.textContent = `✅ 問題別データを取得しました（成績集計なし）`;
+        setbadge('問題別のみ', 'badge-info');
+    } else if (hasSummary) {
+        pageStatus.textContent = `✅ 成績集計データを取得しました`;
+        setbadge('集計のみ', 'badge-info');
     }
+
+    document.getElementById('lblTestName').textContent  = data.testName || "--";
+    document.getElementById('lblExamDate').textContent  = formatExamDate(data.examDate, data.testDateRaw);
+    document.getElementById('lblSubjects').textContent  = hasSubjects
+        ? data.subjects.map(s => s.score != null ? `${s.subject}(${s.score})` : s.subject).join('、')
+        : "--";
+    document.getElementById('lblSummaryStatus').textContent =
+        hasSummary ? `✅ ${data.summary.examType === 'public' ? '公開模試' : '育成テスト'}` : '❌ なし';
 
     document.getElementById('extractResult').style.display = "block";
 }
@@ -147,15 +130,6 @@ function formatExamDate(examDate, fallback) {
 }
 
 function generateFilename(data) {
-    if (data.dataType === 'fieldAccuracyRate') {
-        const cond = data.searchCondition;
-        const nameParts = ["fields", cond.subject, cond.grade ? cond.grade+"y" : "", cond.termCode, cond.testTypeCode]
-            .filter(Boolean)
-            .join("_")
-            .replace(/[\s\/\\:*?"<>|]/g, '_');
-        const date = new Date().toISOString().slice(0, 10);
-        return `nichinoken_${date}_${nameParts}.json`;
-    }
     const date = data.examDate?.isoDate || new Date().toISOString().slice(0, 10);
     const name = (data.testName || 'test').replace(/[\s\/\\:*?"<>|]/g, '_');
     return `nichinoken_${date}_${name}.json`;

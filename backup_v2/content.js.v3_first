@@ -1,0 +1,616 @@
+// ============================================================
+// Nichinoken Test Analyzer v3 — Content Script
+// JSON抽出特化版
+// ============================================================
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "scrapeAllData") {
+        handleUnifiedScrape().then(result => {
+            sendResponse(result);
+        }).catch(error => {
+            sendResponse({ success: false, error: error.message, logs: [`[FATAL] ${error.message}`] });
+        });
+        return true;
+    }
+
+    // 後方互換: 個別アクション
+    if (request.action === "scrapeTestData") {
+        handleScrapeRequest().then(result => {
+            sendResponse(result);
+        }).catch(error => {
+            sendResponse({ success: false, error: error.message, logs: [`[FATAL] ${error.message}`] });
+        });
+        return true;
+    }
+    if (request.action === "scrapeSummaryData") {
+        try {
+            const result = scrapeSummaryFromDoc(document);
+            sendResponse({ success: true, data: result });
+        } catch (e) {
+            sendResponse({ success: false, error: e.message });
+        }
+        return true;
+    }
+    if (request.action === "detectPageType") {
+        const info = detectPageType();
+        sendResponse(info);
+        return true;
+    }
+});
+
+// ============================================================
+// ページ種別判定
+// ============================================================
+
+function detectPageType() {
+    const url = window.location.href;
+    const bodyId = document.body ? document.body.id : '';
+
+    // 問題別回答結果ページ
+    if (url.includes('exam-type1') || url.includes('exam-type11') ||
+        document.querySelector('.seigo-anser-guide_table')) {
+        const isPublic = url.includes('examination-public-trial') || url.includes('exam-type11');
+        return { type: 'questions', examCategory: isPublic ? 'public' : 'training', url };
+    }
+
+    // 成績集計ページ
+    if (url.includes('record-detail') || bodyId === 'ER_A' || bodyId === 'ER_G' ||
+        document.querySelector('.syukei-wrap')) {
+        const isPublic = bodyId === 'ER_G' || url.includes('examination-public-trial');
+        return { type: 'summary', examCategory: isPublic ? 'public' : 'training', url };
+    }
+
+    return { type: 'unknown', url };
+}
+
+// ============================================================
+// 共通ユーティリティ
+// ============================================================
+
+/**
+ * 日付文字列をパース
+ * 対応フォーマット:
+ *   "4年生　2026年3月21日実施"
+ *   "4年生　第1回　2026年2月28日実施"
+ */
+function parseExamDate(rawDateStr) {
+    const gradeMatch = rawDateStr.match(/(\d+)\s*年生/);
+    const roundMatch = rawDateStr.match(/第\s*(\d+)\s*回/);
+    const dateMatch  = rawDateStr.match(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+
+    const grade = gradeMatch ? parseInt(gradeMatch[1], 10) : null;
+    const round = roundMatch ? parseInt(roundMatch[1], 10) : null;
+    const year  = dateMatch ? parseInt(dateMatch[1], 10) : null;
+    const month = dateMatch ? parseInt(dateMatch[2], 10) : null;
+    const day   = dateMatch ? parseInt(dateMatch[3], 10) : null;
+
+    let isoDate = null;
+    if (year && month && day) {
+        isoDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+
+    return { grade, round, year, month, day, isoDate };
+}
+
+/**
+ * 単元名を大分類・小分類に分割
+ */
+function parseCategory(rawUnit) {
+    const patterns = [/^(.+?)－(.+)$/,  /^(.+?)[；;](.+)$/, /^(.+?)：(.+)$/, /^(.+?)-(.+)$/];
+    for (const regex of patterns) {
+        const m = rawUnit.match(regex);
+        if (m) {
+            return {
+                category: m[1].trim(),
+                subCategory: m[2].replace(/[；;]\s*$/, '').trim()
+            };
+        }
+    }
+    return { category: rawUnit, subCategory: "" };
+}
+
+/** 数値テキストを安全に数値へ変換 */
+function toNumber(el) {
+    const t = el ? el.innerText.trim() : '';
+    if (t === '') return null;
+    const m = t.match(/[\d.]+/);
+    return m ? parseFloat(m[0]) : null;
+}
+
+/** 順位テーブルの共通パーサー */
+function extractRankings(table) {
+    if (!table) return [];
+    const result = [];
+    table.querySelectorAll('tbody tr').forEach(row => {
+        const th  = row.querySelector('th');
+        const tds = row.querySelectorAll('td');
+        if (!th || tds.length < 4) return;
+        const extractNum = el => {
+            const m = el.innerText.trim().match(/[\d,]+/);
+            return m ? parseInt(m[0].replace(/,/g, ''), 10) : null;
+        };
+        result.push({
+            label:        th.innerText.trim(),
+            totalCount:   extractNum(tds[0]),
+            myRank:       extractNum(tds[1]),
+            genderCount:  extractNum(tds[2]),
+            myGenderRank: extractNum(tds[3])
+        });
+    });
+    return result;
+}
+
+// ============================================================
+// URL推定: 問題別ページ URL → 成績集計ページ URL
+// ============================================================
+
+function deriveRecordDetailUrl(questionPageUrl) {
+    try {
+        const u = new URL(questionPageUrl);
+        const params = u.searchParams;
+        const examDate = params.get('exam_date');
+        const examKnd  = params.get('exam_knd');
+        const yesrVal  = params.get('yesr_val');
+        const tak      = params.get('tak');
+        const appSession = params.get('appsession');
+
+        if (!examDate || !examKnd) return null;
+
+        // パス判定: training or public
+        const isPublic = u.pathname.includes('examination-public-trial') ||
+                         u.pathname.includes('exam-type11');
+
+        let basePath;
+        if (isPublic) {
+            basePath = '/myn/student/examination-public-trial/academic-ability-judge/record-detail.html';
+        } else {
+            basePath = '/myn/student/training-examination/record-detail.html';
+        }
+
+        const recordUrl = new URL(basePath, u.origin);
+        if (appSession) recordUrl.searchParams.set('appsession', appSession);
+        recordUrl.searchParams.set('exam_knd', examKnd);
+        if (yesrVal) recordUrl.searchParams.set('yesr_val', yesrVal);
+        recordUrl.searchParams.set('exam_date', examDate);
+        if (tak) recordUrl.searchParams.set('tak', tak);
+
+        return recordUrl.href;
+    } catch (e) {
+        return null;
+    }
+}
+
+// ============================================================
+// 統合スクレイピング（v3 メインアクション）
+// ============================================================
+
+async function handleUnifiedScrape() {
+    const logs = [];
+    logs.push("[START] 統合スクレイピング開始 (v3)");
+
+    const pageInfo = detectPageType();
+    logs.push(`[INFO] ページ種別: ${pageInfo.type}, カテゴリ: ${pageInfo.examCategory || 'N/A'}`);
+
+    let subjectsData = [];
+    let summaryData = null;
+    let testName = null;
+    let examDate = null;
+    let testDateRaw = null;
+
+    // ============================================================
+    // CASE 1: 問題別回答結果ページ起点
+    // ============================================================
+    if (pageInfo.type === 'questions') {
+        // 1) 全教科の問題別データを取得
+        const questionsResult = await handleScrapeRequest();
+        logs.push(...(questionsResult.logs || []));
+
+        if (!questionsResult.success || !questionsResult.data?.length) {
+            return { success: false, error: "問題別データの取得に失敗しました", logs };
+        }
+
+        subjectsData = questionsResult.data;
+        testName = subjectsData[0].testName;
+        examDate = subjectsData[0].examDate;
+        testDateRaw = subjectsData[0].testDateRaw;
+
+        // 2) 成績集計ページを自動fetchで取得
+        if (window.location.protocol !== 'file:') {
+            const recordUrl = deriveRecordDetailUrl(window.location.href);
+            if (recordUrl) {
+                logs.push(`[FETCH] 成績集計ページの自動取得: ${recordUrl}`);
+                try {
+                    const response = await fetch(recordUrl, { credentials: "include" });
+                    logs.push(`[FETCH] 成績集計 レスポンス: status=${response.status}`);
+
+                    if (response.ok) {
+                        const htmlText = await response.text();
+                        const doc = new DOMParser().parseFromString(htmlText, "text/html");
+                        // body id をチェックしてパーサーを選択
+                        const bodyId = doc.body ? doc.body.id : '';
+                        logs.push(`[PARSE] 成績集計HTML取得完了: ${htmlText.length}文字, bodyId="${bodyId}"`);
+                        try {
+                            summaryData = scrapeSummaryFromDocWithBodyId(doc, bodyId, pageInfo.examCategory);
+                            logs.push(`[OK] 成績集計データ取得成功`);
+                        } catch (e) {
+                            logs.push(`[WARN] 成績集計のパースに失敗: ${e.message}`);
+                        }
+                    } else {
+                        logs.push(`[WARN] 成績集計ページのHTTPエラー: ${response.status}`);
+                    }
+                } catch (e) {
+                    logs.push(`[WARN] 成績集計ページのfetch失敗: ${e.message}`);
+                }
+            } else {
+                logs.push("[WARN] 成績集計ページのURLを推定できませんでした");
+            }
+        } else {
+            logs.push("[SKIP] ローカルファイルのため成績集計の自動取得をスキップ");
+        }
+    }
+    // ============================================================
+    // CASE 2: 成績集計ページ起点
+    // ============================================================
+    else if (pageInfo.type === 'summary') {
+        try {
+            summaryData = scrapeSummaryFromDoc(document);
+            testName = summaryData.testName;
+            examDate = summaryData.examDate;
+            testDateRaw = summaryData.attentionDayRaw;
+            logs.push(`[OK] 成績集計データ取得成功: ${summaryData.examType}`);
+        } catch (e) {
+            logs.push(`[ERROR] 成績集計データの取得失敗: ${e.message}`);
+            return { success: false, error: e.message, logs };
+        }
+
+        // 問題別ページの自動取得は、URLに sub_code が不明なためスキップ
+        logs.push("[INFO] 成績集計ページ起点のため、問題別データは含まれません。問題別データも必要な場合は問題別ページで実行してください。");
+    }
+    // ============================================================
+    // CASE 3: 非対応ページ
+    // ============================================================
+    else {
+        return {
+            success: false,
+            error: "テスト結果ページまたは成績集計ページを開いてください。",
+            logs
+        };
+    }
+
+    // 統合JSONオブジェクトを構築
+    const unified = buildUnifiedJson(testName, examDate, testDateRaw, subjectsData, summaryData);
+    logs.push(`[DONE] 統合データ構築完了: 教科数=${unified.subjects.length}, 成績集計=${unified.summary ? 'あり' : 'なし'}`);
+
+    return { success: true, data: unified, logs };
+}
+
+// ============================================================
+// 統合JSONオブジェクトの構築
+// ============================================================
+
+function buildUnifiedJson(testName, examDate, testDateRaw, subjectsData, summaryData) {
+    // subjects 配列の整形
+    const subjects = subjectsData.map(d => ({
+        subject: d.subject,
+        score: d.score,
+        answerSummary: d.answerSummary,
+        questions: d.questions
+    }));
+
+    // summary の整形（存在する場合）
+    let summary = null;
+    if (summaryData) {
+        summary = {
+            examType: summaryData.examType,
+            basicSummary: summaryData.basicSummary || [],
+            rankings: summaryData.rankings || []
+        };
+        // 育成テストの場合 examTypeSummary/Rankings が存在
+        if (summaryData.examTypeSummary) {
+            summary.examTypeSummary = summaryData.examTypeSummary;
+        }
+        if (summaryData.examTypeRankings) {
+            summary.examTypeRankings = summaryData.examTypeRankings;
+        }
+    }
+
+    return {
+        version: "3.0",
+        extractedAt: new Date().toISOString(),
+        testName: testName || "不明",
+        testDateRaw: testDateRaw || "",
+        examDate: examDate || {},
+        subjects,
+        summary
+    };
+}
+
+// ============================================================
+// 問題別回答結果ページ スクレイピング（既存ロジック改善版）
+// ============================================================
+
+async function handleScrapeRequest() {
+    const logs = [];
+    logs.push("[START] 問題別データ取得開始");
+
+    let currentData;
+    try {
+        currentData = scrapeDataFromDoc(document);
+        logs.push(`[OK] 現在ページ: 教科=${currentData.subject}, 問題数=${currentData.questions.length}`);
+    } catch (e) {
+        logs.push(`[ERROR] 現在ページのスクレイピング失敗: ${e.message}`);
+        return { success: false, data: [], logs };
+    }
+
+    const results = [currentData];
+
+    // 他教科タブの取得
+    const allTabItems = document.querySelectorAll('.seigo-tab-item');
+    logs.push(`[INFO] 教科タブ要素数: ${allTabItems.length}`);
+
+    const tabLinks = [];
+    allTabItems.forEach((item, idx) => {
+        const a        = item.querySelector('a');
+        const isActive = item.classList.contains('active');
+        const href     = a ? a.href : "(リンクなし)";
+        const text     = a ? a.textContent.trim() : "(テキストなし)";
+        logs.push(`[TAB ${idx}] text="${text}", href="${href}", active=${isActive}`);
+        if (a && !isActive) tabLinks.push({ text, href });
+    });
+
+    if (tabLinks.length === 0) {
+        logs.push("[WARN] 非アクティブなタブが見つかりませんでした。");
+        return { success: true, data: results, logs };
+    }
+
+    if (window.location.protocol === 'file:') {
+        logs.push("[SKIP] ローカルファイルのため他教科の自動取得をスキップ");
+        return { success: true, data: results, logs };
+    }
+
+    // 非同期で他教科のデータを取得
+    for (const tab of tabLinks) {
+        logs.push(`[FETCH] ${tab.text} の取得開始`);
+        try {
+            const response = await fetch(tab.href, { credentials: "include" });
+            if (!response.ok) {
+                logs.push(`[ERROR] ${tab.text} HTTPエラー: ${response.status}`);
+                continue;
+            }
+
+            const htmlText = await response.text();
+            const doc = new DOMParser().parseFromString(htmlText, "text/html");
+
+            const activeTabEl = doc.querySelector('.seigo-tab-item.active a');
+            if (!activeTabEl) {
+                logs.push(`[WARN] ${tab.text}: アクティブタブなし`);
+                continue;
+            }
+
+            const parsedData = scrapeDataFromDoc(doc);
+            logs.push(`[OK] ${tab.text} パース成功: 問題数=${parsedData.questions.length}`);
+            results.push(parsedData);
+        } catch (e) {
+            logs.push(`[ERROR] ${tab.text} の取得失敗: ${e.message}`);
+        }
+    }
+
+    logs.push(`[DONE] 合計 ${results.length} 教科分を取得`);
+    return { success: true, data: results, logs };
+}
+
+function scrapeDataFromDoc(doc) {
+    const testNameEl      = doc.querySelector('h1.headingBox-main');
+    const testDateEl      = doc.querySelector('.date-text');
+    const activeSubjectEl = doc.querySelector('.seigo-tab-item.active a');
+
+    if (!testNameEl || !testDateEl || !activeSubjectEl) {
+        throw new Error("テスト結果情報が見つかりません（テスト名・日付またはアクティブ教科タブが不明）。");
+    }
+
+    const testName    = testNameEl.innerText.trim();
+    const testDateRaw = testDateEl.innerText.trim();
+    const subject     = activeSubjectEl.innerText.trim();
+    const parsedDate  = parseExamDate(testDateRaw);
+    const testId      = `${parsedDate.isoDate || testDateRaw}_${testName}_${subject}`.replace(/\s+/g, '_');
+
+    const score         = toNumber(doc.querySelector('.point-text'));
+    const answerSummary = doc.querySelector('.answer-text')?.innerText.trim() ?? null;
+
+    // 得点テキストそのまま保持（"103点" などの生テキスト）
+    const scoreRaw      = doc.querySelector('.point-text')?.innerText.trim() ?? null;
+
+    const questions = [];
+    doc.querySelectorAll('.seigo-anser-guide_table tbody tr').forEach(row => {
+        const tds = row.querySelectorAll('td');
+        if (tds.length < 7) return;
+
+        const rawUnit    = tds[1].innerText.trim();
+        const resultRaw  = tds[2].innerText.trim();
+        const parsed     = parseCategory(rawUnit);
+
+        // 正答 (tds[3]) も取得（選択肢・模範解答など）
+        const correctAnswer = tds[3] ? tds[3].innerText.trim() : "";
+
+        questions.push({
+            number:        tds[0].innerText.trim(),
+            rawUnit,
+            category:      parsed.category,
+            subCategory:   parsed.subCategory,
+            result:        resultRaw === "" ? "未掲載" : resultRaw,
+            correctAnswer,
+            correctRate:   parseInt(tds[4].innerText.trim(), 10) || 0,
+            incorrectRate: parseInt(tds[5].innerText.trim(), 10) || 0,
+            noAnswerRate:  parseInt(tds[6].innerText.trim(), 10) || 0
+        });
+    });
+
+    return {
+        testId,
+        testName,
+        testDateRaw,
+        examDate: parsedDate,
+        subject,
+        score,
+        scoreRaw,
+        answerSummary,
+        questions,
+        extractedAt: new Date().toISOString()
+    };
+}
+
+// ============================================================
+// 成績集計ページ スクレイピング
+// ============================================================
+
+function scrapeSummaryFromDoc(doc) {
+    const bodyId = doc.body ? doc.body.id : '';
+    const url    = (typeof window !== 'undefined') ? window.location.href : '';
+
+    if (bodyId === 'ER_G' || url.includes('examination-public-trial')) {
+        return scrapePublicExamSummary(doc);
+    }
+    if (bodyId === 'ER_A' || url.includes('training-examination') || doc.querySelector('.syukei-wrap')) {
+        return scrapeTrainingExamSummary(doc);
+    }
+    throw new Error("対応している成績集計ページが見つかりません。");
+}
+
+/**
+ * fetchしたHTMLではURLベースの判定が使えないため、
+ * bodyId + examCategory で振り分けるバージョン
+ */
+function scrapeSummaryFromDocWithBodyId(doc, bodyId, examCategory) {
+    if (bodyId === 'ER_G' || examCategory === 'public') {
+        return scrapePublicExamSummary(doc);
+    }
+    if (bodyId === 'ER_A' || examCategory === 'training' || doc.querySelector('.syukei-wrap')) {
+        return scrapeTrainingExamSummary(doc);
+    }
+    throw new Error("成績集計ページの種別を判定できません。");
+}
+
+// ---- 学習力育成テスト 成績集計 ----
+
+function scrapeTrainingExamSummary(doc) {
+    const attentionDayEl = doc.querySelector('.attention_day');
+    if (!attentionDayEl) throw new Error("実施日情報(.attention_day)が見つかりません。");
+
+    const attentionDayRaw = attentionDayEl.innerText.trim();
+    const parsedDate      = parseExamDate(attentionDayRaw);
+    const testNameEl      = doc.querySelector('h1.headingBox-main');
+    const testName        = testNameEl ? testNameEl.innerText.trim() : "学習力育成テスト成績";
+    const summaryId       = `${parsedDate.isoDate || attentionDayRaw}_training`.replace(/\s+/g, '_');
+
+    const syukeiSection = doc.querySelector('.syukei-wrap');
+    const basicSummary  = [];
+    const rankings      = [];
+
+    if (syukeiSection) {
+        const tables = syukeiSection.querySelectorAll('.syukei_table table');
+
+        if (tables[0]) {
+            tables[0].querySelectorAll('tbody tr').forEach(row => {
+                const th  = row.querySelector('th');
+                const tds = row.querySelectorAll('td');
+                if (!th || tds.length < 5) return;
+                basicSummary.push({
+                    label:  th.innerText.trim(),
+                    kyotsu: toNumber(tds[0]),
+                    oyo:    toNumber(tds[1]),
+                    total:  toNumber(tds[2]),
+                    avg:    toNumber(tds[3]),
+                    eval:   toNumber(tds[4])
+                });
+            });
+        }
+        rankings.push(...extractRankings(tables[1]));
+    }
+
+    const examTypeSection    = doc.querySelector('.syukei-examinationType-wrap');
+    const examTypeSummary    = [];
+    const examTypeRankings   = [];
+
+    if (examTypeSection) {
+        const tables = examTypeSection.querySelectorAll('.syukei-examinationType_table table');
+
+        if (tables[0]) {
+            tables[0].querySelectorAll('tbody tr').forEach(row => {
+                const th  = row.querySelector('th');
+                const tds = row.querySelectorAll('td');
+                if (!th || tds.length < 5) return;
+                examTypeSummary.push({
+                    label:   th.innerText.trim(),
+                    kyotsu:  toNumber(tds[0]),
+                    sentaku: toNumber(tds[1]),
+                    total:   toNumber(tds[2]),
+                    avg:     toNumber(tds[3]),
+                    eval:    toNumber(tds[4])
+                });
+            });
+        }
+        examTypeRankings.push(...extractRankings(tables[1]));
+    }
+
+    return {
+        summaryId,
+        examType: "training",
+        testName,
+        attentionDayRaw,
+        examDate: parsedDate,
+        basicSummary,
+        rankings,
+        examTypeSummary,
+        examTypeRankings,
+        extractedAt: new Date().toISOString()
+    };
+}
+
+// ---- 全国公開模試 成績集計 ----
+
+function scrapePublicExamSummary(doc) {
+    const attentionDayEl = doc.querySelector('.attention_day');
+    if (!attentionDayEl) throw new Error("実施日情報(.attention_day)が見つかりません。");
+
+    const attentionDayRaw = attentionDayEl.innerText.trim();
+    const parsedDate      = parseExamDate(attentionDayRaw);
+    const testNameEl      = doc.querySelector('h1.headingBox-main');
+    const testName        = testNameEl ? testNameEl.innerText.trim() : "全国公開模試成績";
+    const roundStr        = parsedDate.round ? `_R${parsedDate.round}` : '';
+    const summaryId       = `${parsedDate.isoDate || attentionDayRaw}_public${roundStr}`.replace(/\s+/g, '_');
+
+    const syukeiSection = doc.querySelector('.syukei-wrap');
+    const basicSummary  = [];
+    const rankings      = [];
+
+    if (syukeiSection) {
+        const scoreTable = syukeiSection.querySelector('.syukei-typeComprehensive_table-4c table');
+        if (scoreTable) {
+            scoreTable.querySelectorAll('tbody tr').forEach(row => {
+                const th  = row.querySelector('th');
+                const tds = row.querySelectorAll('td');
+                if (!th || tds.length < 3) return;
+                basicSummary.push({
+                    label: th.innerText.trim(),
+                    score: toNumber(tds[0]),
+                    avg:   toNumber(tds[1]),
+                    hensa: toNumber(tds[2])
+                });
+            });
+        }
+
+        const rankTable = syukeiSection.querySelector('.syukei_table table');
+        rankings.push(...extractRankings(rankTable));
+    }
+
+    return {
+        summaryId,
+        examType: "public",
+        testName,
+        attentionDayRaw,
+        examDate: parsedDate,
+        basicSummary,
+        rankings,
+        extractedAt: new Date().toISOString()
+    };
+}

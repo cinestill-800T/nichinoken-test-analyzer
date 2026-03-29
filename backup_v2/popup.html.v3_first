@@ -12,7 +12,7 @@
             <span class="version-badge">v3.0</span>
         </header>
 
-        <!-- データ抽出 -->
+        <!-- ① ページ検出 & データ抽出 -->
         <div id="statusArea" class="card card-primary">
             <div class="card-header">
                 <h2>データ抽出</h2>
@@ -43,7 +43,10 @@
 
                 <div class="actions-main">
                     <button id="btnExtractAndDownload" class="btn primary large">
-                        &#x1F4E5; JSONをダウンロード
+                        &#x1F4E5; JSONを抽出してダウンロード
+                    </button>
+                    <button id="btnExtractAndSave" class="btn outline">
+                        &#x1F4BE; ストレージに保存
                     </button>
                 </div>
             </div>
@@ -55,7 +58,27 @@
             </details>
         </div>
 
-        <!-- JSONプレビュー -->
+        <!-- ② 保存データ管理 -->
+        <div class="card">
+            <div class="card-header">
+                <h2>保存データ管理</h2>
+                <span id="lblStoredCount" class="badge badge-info">0件</span>
+            </div>
+            <p class="hint">期間: <span id="lblDateRange">--</span></p>
+
+            <div class="actions">
+                <button id="btnDownloadAll" class="btn outline">&#x1F4E5; 全データJSON</button>
+                <button id="btnMigrate" class="btn outline" style="display:none;">&#x1F504; v2→v3移行</button>
+                <button id="btnClear" class="btn danger outline">&#x1F5D1; 全クリア</button>
+            </div>
+
+            <div class="import-section">
+                <p class="hint">JSONから復元:</p>
+                <input type="file" id="fileImport" accept=".json">
+            </div>
+        </div>
+
+        <!-- ③ JSONプレビュー -->
         <div id="previewCard" class="card" style="display: none;">
             <div class="card-header">
                 <h2>JSONプレビュー</h2>
