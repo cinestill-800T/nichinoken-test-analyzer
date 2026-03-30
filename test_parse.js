@@ -1,7 +1,8 @@
 const fs = require('fs');
 const { JSDOM } = require('jsdom');
 
-let mhtml = fs.readFileSync('分野別正答率｜MY NICHINOKEN.mhtml', 'utf8');
+const filePath = process.argv[2] || '分野別正答率｜MY NICHINOKEN.mhtml';
+let mhtml = fs.readFileSync(filePath, 'utf8');
 
 // Quoted-printable decoding since mhtml is quoted-printable encoded
 function decodeQuotedPrintable(str) {

@@ -163,7 +163,10 @@ function generateFilename(data) {
 
 function downloadJson(data, filename) {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    chrome.downloads.download({ url: URL.createObjectURL(blob), filename, saveAs: true });
+    const objectUrl = URL.createObjectURL(blob);
+    chrome.downloads.download({ url: objectUrl, filename, saveAs: true }, () => {
+        URL.revokeObjectURL(objectUrl);
+    });
 }
 
 function showJsonPreview(data) {

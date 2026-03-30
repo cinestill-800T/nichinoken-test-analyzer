@@ -10,11 +10,16 @@ If no argument is given, list all `.mhtml` files in the current directory and as
 
 2. **Identify the target MHTML file**: Use the argument if provided. If the file does not exist, list available `.mhtml` files and inform the user.
 
-3. **Run the test**: `test_parse.js` is hardcoded to read `分野別正答率｜MY NICHINOKEN.mhtml`. If the target file is different, create a temporary modified version of test_parse.js that reads the specified file, or explain to the user that they need to edit the filename in test_parse.js.
+3. **Run the test**: `test_parse.js` accepts an optional MHTML file path as the first argument (defaults to `分野別正答率｜MY NICHINOKEN.mhtml`).
 
    For `分野別正答率｜MY NICHINOKEN.mhtml`, run directly:
    ```
    node test_parse.js
+   ```
+
+   For a different `分野別正答率` MHTML file:
+   ```
+   node test_parse.js "path/to/file.mhtml"
    ```
 
    For other MHTML files (test result pages), the scraping logic is different. Run a quick inline node script that:

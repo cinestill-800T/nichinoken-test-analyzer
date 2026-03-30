@@ -3,7 +3,7 @@
 // JSON抽出特化版
 // ============================================================
 
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     if (request.action === "scrapeAllData") {
         if (document.querySelector('.CorrectAnswerRate_table')) {
             try {
@@ -87,6 +87,20 @@ function extractRankings(table) {
         });
     });
     return result;
+}
+
+// ============================================================
+// fetchラッパー（タイムアウト付き）
+// ============================================================
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+        clearTimeout(timeoutId);
+    }
 }
 
 // ============================================================
@@ -225,7 +239,7 @@ async function handleUnifiedScrape() {
     if (!summaryData && subTabUrls.resultsUrl && !isLocalFile) {
         logs.push(`[STEP2] 成績サブタブURLからfetch: ${subTabUrls.resultsUrl}`);
         try {
-            const response = await fetch(subTabUrls.resultsUrl, { credentials: "include" });
+            const response = await fetchWithTimeout(subTabUrls.resultsUrl, { credentials: "include" });
             logs.push(`[FETCH] 成績 レスポンス: status=${response.status}`);
             if (response.ok) {
                 const htmlText = await response.text();
@@ -282,7 +296,7 @@ async function handleUnifiedScrape() {
 
 async function fetchAndScrapeErrata(errataUrl, logs) {
     logs.push(`[FETCH] 正誤一覧ページ取得: ${errataUrl}`);
-    const response = await fetch(errataUrl, { credentials: "include" });
+    const response = await fetchWithTimeout(errataUrl, { credentials: "include" });
     logs.push(`[FETCH] 正誤一覧 レスポンス: status=${response.status}`);
 
     if (!response.ok) {
@@ -303,7 +317,7 @@ async function fetchAndScrapeErrata(errataUrl, logs) {
 
 async function fetchAndScrapeOnePage(url, logs, label) {
     logs.push(`[FETCH] ${label}: ${url}`);
-    const response = await fetch(url, { credentials: "include" });
+    const response = await fetchWithTimeout(url, { credentials: "include" });
     if (!response.ok) {
         logs.push(`[ERROR] ${label} HTTPエラー: ${response.status}`);
         return null;
