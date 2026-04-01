@@ -6,6 +6,35 @@
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     if (request.action === "scrapeAllData") {
         if (document.querySelector('.CorrectAnswerRate_table')) {
+            if (request.mode === 'allCombinations') {
+                (async () => {
+                    try {
+                        const { combinations } = buildFormCombinations(document);
+                        if (combinations.length === 0) {
+                            sendResponse({ success: false, error: '有効な組み合わせが0件です', logs: [] });
+                            return;
+                        }
+                        await chrome.storage.local.set({
+                            nichinokenCollection: {
+                                status: 'collecting',
+                                combinations,
+                                index: 0,
+                                results: []
+                            }
+                        });
+                        sendResponse({
+                            success: true,
+                            data: { dataType: 'collectionStarted', total: combinations.length },
+                            logs: [`[INFO] ${combinations.length}件の組み合わせを開始します`]
+                        });
+                        _submitFormWithCombo(combinations[0]);
+                    } catch (e) {
+                        sendResponse({ success: false, error: e.message, logs: [`[FATAL] ${e.message}`] });
+                    }
+                })();
+                return true;
+            }
+
             try {
                 const result = scrapeFieldAccuracyRate(document);
                 sendResponse({ success: true, data: result, logs: ["[INFO] 分野別正答率データを取得しました"] });
@@ -724,3 +753,84 @@ function scrapeFieldAccuracyRate(doc) {
         fields
     };
 }
+
+// ============================================================
+// 分野別正答率 — 全組み合わせ自動取得
+// ============================================================
+
+function getEnabledRadioValues(doc, name) {
+    return Array.from(doc.querySelectorAll(`input[type="radio"][name="${name}"]`))
+        .filter(el => !el.disabled)
+        .map(el => el.value);
+}
+
+function buildFormCombinations(doc) {
+    const subjects  = getEnabledRadioValues(doc, 'subject_v');
+    const grades    = getEnabledRadioValues(doc, 'grade_v');
+    const terms     = getEnabledRadioValues(doc, 'term_v');
+    const testKinds = getEnabledRadioValues(doc, 'test_knds_v');
+
+    const hiddenParams = {};
+    doc.querySelectorAll('form[name="selectExam"] input[type="hidden"]').forEach(el => {
+        hiddenParams[el.name] = el.value;
+    });
+
+    const combinations = [];
+    for (const s of subjects)
+        for (const g of grades)
+            for (const t of terms)
+                for (const k of testKinds)
+                    combinations.push({ subject_v: s, grade_v: g, term_v: t, test_knds_v: k });
+
+    return { combinations, hiddenParams };
+}
+
+// フォームを指定コンボで送信してページ遷移させる
+function _submitFormWithCombo(combo) {
+    const formEl = document.querySelector('form[name="selectExam"]');
+    if (!formEl) return;
+    for (const [name, value] of Object.entries(combo)) {
+        const radio = document.querySelector(`input[type="radio"][name="${name}"][value="${value}"]`);
+        if (radio) radio.checked = true;
+    }
+    const submitBtn = formEl.querySelector('button[type="submit"], input[type="submit"]');
+    if (submitBtn) submitBtn.click();
+    else formEl.submit();
+}
+
+// ページリロードをまたいで収集を継続する（auto-runから呼ばれる）
+async function _continueCollection(state) {
+    const { combinations, index, results } = state;
+    const newResults = [...results];
+
+    if (document.querySelector('.CorrectAnswerRate_table')) {
+        try {
+            newResults.push(scrapeFieldAccuracyRate(document));
+        } catch (e) {}
+    }
+
+    const nextIndex = index + 1;
+
+    if (nextIndex < combinations.length) {
+        await chrome.storage.local.set({
+            nichinokenCollection: { ...state, index: nextIndex, results: newResults }
+        });
+        _submitFormWithCombo(combinations[nextIndex]);
+    } else {
+        await chrome.storage.local.set({
+            nichinokenCollection: { status: 'done', results: newResults, total: combinations.length }
+        });
+    }
+}
+
+// ============================================================
+// ページロード時に収集が進行中なら自動継続
+// ============================================================
+(async () => {
+    try {
+        const { nichinokenCollection } = await chrome.storage.local.get('nichinokenCollection');
+        if (nichinokenCollection?.status === 'collecting') {
+            await _continueCollection(nichinokenCollection);
+        }
+    } catch (e) {}
+})();

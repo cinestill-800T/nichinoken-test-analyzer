@@ -9,22 +9,59 @@ let currentExtractedData = null;
 // 初期化
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (!tabs || tabs.length === 0) return;
-        const tabId = tabs[0].id;
+    bindAllEventListeners();
 
-        chrome.tabs.sendMessage(tabId, { action: "scrapeAllData" }, (response) => {
-            if (chrome.runtime.lastError) {
-                document.getElementById('pageStatus').textContent =
-                    '⚠ ページを更新（F5）してから再度お試しください。';
-                setbadge('未接続', 'badge-error');
-                return;
+    // まずストレージを確認して、収集済み・収集中の状態を優先表示
+    chrome.storage.local.get('nichinokenCollection', ({ nichinokenCollection }) => {
+        if (nichinokenCollection?.status === 'done') {
+            // 収集完了済み → 即結果を表示
+            chrome.storage.local.remove('nichinokenCollection');
+            const finalData = {
+                version: "3.0",
+                dataType: "fieldAccuracyRateAll",
+                extractedAt: new Date().toISOString(),
+                combinations: nichinokenCollection.results
+            };
+            currentExtractedData = finalData;
+            showBulkResults(finalData);
+            document.getElementById('extractResult').style.display = "block";
+            return;
+        }
+
+        if (nichinokenCollection?.status === 'collecting') {
+            // 収集中 → 進捗を表示（完了したら再度開いてください）
+            const total = nichinokenCollection.combinations.length;
+            const n = nichinokenCollection.results?.length ?? 0;
+            document.getElementById('pageStatus').textContent =
+                `⏳ データ取得中... (${n} / ${total}) 完了後にもう一度開いてください`;
+            setbadge('取得中', 'badge-info');
+            return;
+        }
+
+        // 収集状態なし → 通常フロー（コンテンツスクリプトに問い合わせ）
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            if (!tabs || tabs.length === 0) return;
+            const tab = tabs[0];
+            const isFieldPage = tab.url?.includes('correct-answer-rate-by-field-list');
+            const msg = isFieldPage
+                ? { action: "scrapeAllData", mode: "allCombinations" }
+                : { action: "scrapeAllData" };
+
+            if (isFieldPage) {
+                document.getElementById('pageStatus').textContent = '⏳ 収集を開始しています...';
             }
-            handleScrapeResponse(response);
+
+            chrome.tabs.sendMessage(tab.id, msg, (response) => {
+                if (chrome.runtime.lastError) {
+                    document.getElementById('pageStatus').textContent =
+                        '⚠ ページを更新（F5）してから再度お試しください。';
+                    setbadge('未接続', 'badge-error');
+                    return;
+                }
+                handleScrapeResponse(response);
+            });
         });
     });
-
-    bindAllEventListeners();
 });
 
 // ============================================================
@@ -46,10 +83,20 @@ function handleScrapeResponse(response) {
         return;
     }
 
-    currentExtractedData = response.data;
     const data = response.data;
 
-    if (data.dataType === 'fieldAccuracyRate') {
+    if (data.dataType === 'collectionStarted') {
+        pageStatus.textContent = `⏳ 収集開始しました。完了後にもう一度ポップアップを開いてください。`;
+        setbadge('取得中', 'badge-info');
+        // ポップアップはページ遷移で閉じるため、次回オープン時にストレージから結果を読む
+        return;
+    }
+
+    currentExtractedData = data;
+
+    if (data.dataType === 'fieldAccuracyRateAll') {
+        showBulkResults(data);
+    } else if (data.dataType === 'fieldAccuracyRate') {
         pageStatus.textContent = `✅ 分野別正答率データを取得しました！`;
         setbadge('分野別', 'badge-success');
         
@@ -132,6 +179,18 @@ function bindAllEventListeners() {
 // ヘルパー関数
 // ============================================================
 
+function showBulkResults(data) {
+    const count = data.combinations.length;
+    const totalRows = data.combinations.reduce((s, r) => s + r.fields.length, 0);
+    document.getElementById('pageStatus').textContent = `✅ 全組み合わせ取得完了！`;
+    setbadge('分野別(全件)', 'badge-success');
+    document.getElementById('lblTestName').textContent = "分野別正答率（全組み合わせ）";
+    document.getElementById('lblExamDate').textContent = "--";
+    document.getElementById('lblSubjects').textContent = `${count}件の条件`;
+    document.getElementById('lblSummaryStatus').parentElement.querySelector('.result-label').textContent = "データ件数";
+    document.getElementById('lblSummaryStatus').textContent = `✅ ${count}条件 / ${totalRows}行`;
+}
+
 function setbadge(text, cls) {
     const el = document.getElementById('pageTypeBadge');
     el.textContent = text;
@@ -147,6 +206,10 @@ function formatExamDate(examDate, fallback) {
 }
 
 function generateFilename(data) {
+    if (data.dataType === 'fieldAccuracyRateAll') {
+        const date = new Date().toISOString().slice(0, 10);
+        return `nichinoken_${date}_fields_all.json`;
+    }
     if (data.dataType === 'fieldAccuracyRate') {
         const cond = data.searchCondition;
         const nameParts = ["fields", cond.subject, cond.grade ? cond.grade+"y" : "", cond.termCode, cond.testTypeCode]
