@@ -1,6 +1,6 @@
 // ============================================================
-// Nichinoken Test Data Extractor v3 — Popup Script
-// JSON抽出特化版
+// Nichinoken Test Data Extractor v4.0 — Popup Script
+// パッケージ取得 + 既存単体抽出 デュアルモード
 // ============================================================
 
 let currentExtractedData = null;
@@ -11,16 +11,17 @@ let currentExtractedData = null;
 document.addEventListener('DOMContentLoaded', () => {
     bindAllEventListeners();
 
-    // まずストレージを確認して、収集済み・収集中の状態を優先表示
-    chrome.storage.local.get('nichinokenCollection', ({ nichinokenCollection }) => {
-        if (nichinokenCollection?.status === 'done') {
-            // 収集完了済み → 即結果を表示
+    // ストレージの収集状態を確認
+    chrome.storage.local.get(['nichinokenCollection', 'nichinokenPackageProgress'], (stored) => {
+
+        // 分野別正答率の収集完了チェック
+        if (stored.nichinokenCollection?.status === 'done') {
             chrome.storage.local.remove('nichinokenCollection');
             const finalData = {
                 version: "3.0",
                 dataType: "fieldAccuracyRateAll",
                 extractedAt: new Date().toISOString(),
-                combinations: nichinokenCollection.results
+                combinations: stored.nichinokenCollection.results
             };
             currentExtractedData = finalData;
             showBulkResults(finalData);
@@ -28,21 +29,40 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        if (nichinokenCollection?.status === 'collecting') {
-            // 収集中 → 進捗を表示（完了したら再度開いてください）
-            const total = nichinokenCollection.combinations.length;
-            const n = nichinokenCollection.results?.length ?? 0;
+        if (stored.nichinokenCollection?.status === 'collecting') {
+            const total = stored.nichinokenCollection.combinations.length;
+            const n = stored.nichinokenCollection.results?.length ?? 0;
             document.getElementById('pageStatus').textContent =
                 `⏳ データ取得中... (${n} / ${total}) 完了後にもう一度開いてください`;
-            setbadge('取得中', 'badge-info');
+            setBadge('取得中', 'badge-info');
             return;
         }
 
-        // 収集状態なし → 通常フロー（コンテンツスクリプトに問い合わせ）
+        // 通常フロー → アクティブタブのURLで判定
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
             if (!tabs || tabs.length === 0) return;
             const tab = tabs[0];
-            const isFieldPage = tab.url?.includes('correct-answer-rate-by-field-list');
+            const url = tab.url || '';
+
+            // ---- モード判定 ----
+
+            // トップページ or 過去テスト一覧 → パッケージモード
+            if (url.includes('examination-review-top') || url.includes('examination-review-list') || url.includes('examination-public-trial-review-list') || url.includes('examination-training-special-review-list')) {
+                activatePackageMode(tab);
+                return;
+            }
+
+            // Bookendビューア
+            const isBookend = url.includes('open-problem.html') || url.includes('open-answer.html');
+            if (isBookend) {
+                activateBookendMode(tab);
+                return;
+            }
+
+            // 分野別正答率
+            const isFieldPage = url.includes('correct-answer-rate-by-field-list');
+
+            // 詳細ページ → 既存の単体抽出モード
             const msg = isFieldPage
                 ? { action: "scrapeAllData", mode: "allCombinations" }
                 : { action: "scrapeAllData" };
@@ -55,7 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (chrome.runtime.lastError) {
                     document.getElementById('pageStatus').textContent =
                         '⚠ ページを更新（F5）してから再度お試しください。';
-                    setbadge('未接続', 'badge-error');
+                    setBadge('未接続', 'badge-error');
                     return;
                 }
                 handleScrapeResponse(response);
@@ -65,13 +85,423 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ============================================================
-// スクレイピング結果の処理
+// パッケージモード（トップページ）
+// ============================================================
+
+function activatePackageMode(tab) {
+    document.getElementById('singleMode').style.display = 'none';
+    document.getElementById('packageMode').style.display = 'block';
+
+    // テスト一覧をスキャン
+    chrome.tabs.sendMessage(tab.id, { action: "scanTestList" }, (response) => {
+        if (chrome.runtime.lastError) {
+            document.getElementById('pkgStatus').textContent =
+                '⚠ ページを更新（F5）してから再度お試しください。';
+            document.getElementById('pkgBadge').textContent = '未接続';
+            document.getElementById('pkgBadge').className = 'badge badge-error';
+            return;
+        }
+
+        if (!response?.success || !response.tests || response.tests.length === 0) {
+            document.getElementById('pkgStatus').textContent =
+                '⚠ テスト一覧が見つかりませんでした。';
+            document.getElementById('pkgBadge').textContent = '検出なし';
+            document.getElementById('pkgBadge').className = 'badge badge-error';
+            return;
+        }
+
+        renderTestCheckboxes(response.tests);
+        document.getElementById('pkgStatus').textContent =
+            `✅ ${response.tests.length}件のテストを検出しました`;
+    });
+}
+
+function renderTestCheckboxes(tests) {
+    const container = document.getElementById('testCheckboxes');
+    container.innerHTML = '';
+
+    tests.forEach((test, idx) => {
+        const dateStr = test.examDate
+            ? `${test.examDate.substring(0, 4)}/${test.examDate.substring(4, 6)}/${test.examDate.substring(6, 8)}`
+            : '';
+        const subjectCount = Object.keys(test.subjects).length;
+        const subjectNames = Object.values(test.subjects).map(s => s.label).join('・');
+
+        const label = document.createElement('label');
+        label.className = 'checkbox-item';
+        label.innerHTML = `
+            <input type="checkbox" class="test-checkbox" data-idx="${idx}" checked>
+            <span class="checkbox-label">
+                <span class="test-name">${test.testName}</span>
+                <span class="test-meta">${dateStr} ｜ ${subjectNames}（${subjectCount}教科）</span>
+            </span>
+        `;
+        container.appendChild(label);
+    });
+
+    // テストデータをDOMに保持
+    container.dataset.tests = JSON.stringify(tests);
+}
+
+// ============================================================
+// パッケージ取得実行
+// ============================================================
+
+async function executePackageFetch() {
+    const container = document.getElementById('testCheckboxes');
+    const allTests = JSON.parse(container.dataset.tests || '[]');
+
+    // 選択されたテストを抽出
+    const selectedTests = [];
+    container.querySelectorAll('.test-checkbox').forEach(cb => {
+        if (cb.checked) {
+            const idx = parseInt(cb.dataset.idx);
+            selectedTests.push(allTests[idx]);
+        }
+    });
+
+    if (selectedTests.length === 0) {
+        alert('少なくとも1つのテストを選択してください。');
+        return;
+    }
+
+    const options = {
+        correctionList: document.getElementById('optCorrectionList').checked,
+        commentary: document.getElementById('optCommentary').checked,
+        results: document.getElementById('optResults').checked
+    };
+
+    if (!options.correctionList && !options.commentary && !options.results) {
+        alert('少なくとも1つのデータ種別を選択してください。');
+        return;
+    }
+
+    const outputFormat = document.querySelector('input[name="outputFormat"]:checked').value;
+
+    // UI更新
+    const btn = document.getElementById('btnFetchPackage');
+    btn.disabled = true;
+    btn.textContent = '⏳ 取得中...';
+    document.getElementById('progressArea').style.display = 'block';
+
+    // ストレージをクリアしてから開始
+    await chrome.storage.local.remove(['nichinokenPackageProgress', 'nichinokenPackageResult']);
+
+    // content scriptにパッケージ取得を依頼（即座にstartedが返る）
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (!tabs || tabs.length === 0) return;
+        chrome.tabs.sendMessage(tabs[0].id, {
+            action: "fetchTestPackage",
+            config: { tests: selectedTests, options }
+        }, (response) => {
+            if (chrome.runtime.lastError || !response?.success) {
+                btn.disabled = false;
+                btn.textContent = '📥 パッケージをダウンロード';
+                document.getElementById('pkgStatus').textContent = '⚠ 接続エラー。ページを更新（F5）してください。';
+                return;
+            }
+            // 取得開始成功 → ポーリングで進捗と結果を監視
+            startPollingForResults(btn, outputFormat);
+        });
+    });
+}
+
+function startPollingForResults(btn, outputFormat) {
+    const pollInterval = setInterval(() => {
+        chrome.storage.local.get(['nichinokenPackageProgress', 'nichinokenPackageResult'], (stored) => {
+            const prog = stored.nichinokenPackageProgress;
+            const result = stored.nichinokenPackageResult;
+
+            // 進捗更新
+            if (prog && prog.status === 'collecting') {
+                const pct = prog.total > 0 ? Math.round((prog.completed / prog.total) * 100) : 0;
+                document.getElementById('progressFill').style.width = `${pct}%`;
+                document.getElementById('progressText').textContent =
+                    `${prog.detail || ''} (${prog.completed}/${prog.total})`;
+            }
+
+            // エラー
+            if (prog && prog.status === 'error') {
+                clearInterval(pollInterval);
+                btn.disabled = false;
+                btn.textContent = '📥 パッケージをダウンロード';
+                document.getElementById('pkgStatus').textContent = `⚠ ${prog.error || '取得に失敗しました'}`;
+                chrome.storage.local.remove(['nichinokenPackageProgress', 'nichinokenPackageResult']);
+                return;
+            }
+
+            // 完了 → 結果を処理
+            if (result && result.success) {
+                clearInterval(pollInterval);
+                handlePackageResult(result, btn, outputFormat);
+            }
+        });
+    }, 500);
+}
+
+async function handlePackageResult(result, btn, outputFormat) {
+    // ログ表示
+    if (result.logs?.length > 0) {
+        document.getElementById('pkgDebugSection').style.display = 'block';
+        document.getElementById('pkgDebugLog').textContent = result.logs.join('\n');
+    }
+
+    // 完了UI
+    document.getElementById('progressFill').style.width = '100%';
+    document.getElementById('progressText').textContent = '✅ 全データ取得完了！';
+
+    const packageData = buildPackageData(result.results);
+    currentExtractedData = packageData;
+
+    try {
+        if (outputFormat === 'zip') {
+            await downloadAsZip(packageData, result.results);
+        } else {
+            downloadJson(packageData, generatePackageFilename(packageData));
+        }
+        document.getElementById('pkgStatus').textContent = '✅ ダウンロード完了！';
+        document.getElementById('pkgBadge').textContent = '完了';
+        document.getElementById('pkgBadge').className = 'badge badge-success';
+    } catch (e) {
+        document.getElementById('pkgStatus').textContent = `⚠ ダウンロードエラー: ${e.message}`;
+    }
+
+    btn.disabled = false;
+    btn.textContent = '📥 パッケージをダウンロード';
+
+    // ストレージをクリア
+    chrome.storage.local.remove(['nichinokenPackageProgress', 'nichinokenPackageResult']);
+}
+
+// ============================================================
+// パッケージデータ構築
+// ============================================================
+
+function buildPackageData(results) {
+    return {
+        version: "4.0",
+        dataType: "testPackage",
+        extractedAt: new Date().toISOString(),
+        testCount: results.length,
+        tests: results.map(r => ({
+            testName: r.testName,
+            examDate: r.examDate,
+            examKnd: r.examKnd,
+            subjects: r.subjects || [],
+            summary: r.summary || null
+        }))
+    };
+}
+
+// ============================================================
+// ZIPダウンロード
+// ============================================================
+
+async function downloadAsZip(packageData, results) {
+    const zip = new JSZip();
+
+    // 科目名マッピング（日本語 → ASCII）
+    const subjectToAscii = {
+        '国語': 'kokugo', '算数': 'sansu', '社会': 'shakai', '理科': 'rika',
+        'unknown': 'unknown'
+    };
+    const toAsciiSubject = (name) => subjectToAscii[name] || name.replace(/[^a-zA-Z0-9]/g, '_');
+
+    // テスト種別マッピング
+    const examKndLabel = { P: 'kokai_moshi', N: 'ikusei_test', S: 'koushu_test' };
+
+    // metadata.json（日本語名のマッピングを含む）
+    const metadata = {
+        version: "4.1",
+        createdAt: new Date().toISOString(),
+        testCount: results.length,
+        encoding_note: "フォルダ名・ファイル名は文字化け防止のためASCII表記です。日本語名はtestsフィールドを参照してください。",
+        tests: results.map((r, idx) => ({
+            folderName: `test_${idx + 1}_${r.examDate || 'unknown'}`,
+            testName: r.testName,
+            examDate: r.examDate,
+            examKnd: r.examKnd,
+            subjectCount: r.subjects?.length || 0,
+            hasSummary: !!r.summary,
+            hasCommentary: r.commentary ? Object.keys(r.commentary).length : 0,
+            subjects: (r.subjects || []).map(s => ({
+                ascii: toAsciiSubject(s.subject),
+                label: s.subject
+            }))
+        }))
+    };
+    zip.file("metadata.json", JSON.stringify(metadata, null, 2));
+
+    // 各テストのデータ
+    for (let idx = 0; idx < results.length; idx++) {
+        const test = results[idx];
+        const folderName = `test_${idx + 1}_${test.examDate || 'unknown'}`;
+        const folder = zip.folder(folderName);
+
+        // 正誤一覧（教科別）
+        if (test.subjects && test.subjects.length > 0) {
+            const seigoFolder = folder.folder("seigo_ichiran");
+            for (const subj of test.subjects) {
+                const asciiName = toAsciiSubject(subj.subject);
+                seigoFolder.file(`${asciiName}.json`, JSON.stringify(subj, null, 2));
+            }
+        }
+
+        // 解説（教科別）
+        if (test.commentary && Object.keys(test.commentary).length > 0) {
+            const commentaryFolder = folder.folder("kaisetsu");
+            for (const [subjName, commentaryData] of Object.entries(test.commentary)) {
+                const asciiName = toAsciiSubject(subjName);
+                commentaryFolder.file(`${asciiName}.txt`, commentaryData.text || '');
+                if (commentaryData.htmlRaw) {
+                    commentaryFolder.file(`${asciiName}.html`, commentaryData.htmlRaw);
+                }
+            }
+        }
+
+        // 解答PDFリンク
+        if (test.answerPdfUrls && Object.keys(test.answerPdfUrls).length > 0) {
+            folder.file("answer_pdf_links.json", JSON.stringify(test.answerPdfUrls, null, 2));
+        }
+
+        // 成績集計
+        if (test.summary) {
+            folder.file("results_summary.json", JSON.stringify(test.summary, null, 2));
+        }
+
+        // 統合データ（AI分析用 — 全データを1ファイルに）
+        const unified = {
+            version: "4.1",
+            testName: test.testName,
+            examDate: test.examDate,
+            subjects: test.subjects || [],
+            commentary: test.commentary || {},
+            answerPdfUrls: test.answerPdfUrls || {},
+            summary: test.summary || null,
+            extractedAt: new Date().toISOString()
+        };
+        folder.file("unified.json", JSON.stringify(unified, null, 2));
+    }
+
+    // ZIP生成＆ダウンロード
+    const blob = await zip.generateAsync({ type: "blob" });
+    const objectUrl = URL.createObjectURL(blob);
+    const now = new Date();
+    const ts = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
+    const filename = `nichinoken_${ts}_package.zip`;
+
+    return new Promise((resolve, reject) => {
+        chrome.downloads.download({
+            url: objectUrl,
+            filename,
+            saveAs: false  // ポップアップが閉じる問題を回避
+        }, (downloadId) => {
+            if (chrome.runtime.lastError) {
+                console.error("Download error:", chrome.runtime.lastError.message);
+                URL.revokeObjectURL(objectUrl);
+                reject(new Error(chrome.runtime.lastError.message));
+                return;
+            }
+            // ダウンロード開始後、少し待ってからURLを解放
+            setTimeout(() => URL.revokeObjectURL(objectUrl), 5000);
+            resolve(downloadId);
+        });
+    });
+}
+
+function activateBookendMode(tab) {
+    // singleModeを非表示にしてBookend専用UIを表示
+    const singleMode = document.getElementById('singleMode');
+    singleMode.innerHTML = `
+        <div class="card card-primary">
+            <div class="card-header">
+                <h2>🖼 問題用紙のダウンロード</h2>
+                <span class="badge badge-success">Bookendビューア検出</span>
+            </div>
+            <p id="bookendStatus" class="status-text">Bookendビューアを検出しました。全ページを画像として保存できます。</p>
+
+            <div id="bookendProgressArea" style="display: none; margin: 10px 0;">
+                <div class="progress-bar">
+                    <div id="bookendProgressFill" class="progress-fill" style="width: 0%"></div>
+                </div>
+                <p id="bookendProgressText" class="progress-text">スキャン中...</p>
+            </div>
+
+            <div class="actions-main" style="margin-top: 10px;">
+                <button id="btnBookendDownload" class="btn primary large">
+                    🖼 全ページを画像でダウンロード
+                </button>
+            </div>
+
+            <div class="guide-box" style="margin-top: 12px;">
+                <div class="guide-title">📖 使い方</div>
+                <ol class="guide-steps">
+                    <li><strong>1ページ目</strong>を表示した状態でボタンを押してください</li>
+                    <li>自動的にページをめくりながら全ページをキャプチャします</li>
+                    <li>完了後、画像ファイルがダウンロードフォルダに保存されます</li>
+                </ol>
+                <div class="guide-detail" style="margin-top: 6px;">
+                    <p style="font-size: 11px; color: #94a3b8; margin: 0;">
+                        📁 ファイル名: <code style="color: #c4b5fd; background: rgba(99,102,241,0.15); padding: 1px 4px; border-radius: 3px;">[テスト種別]_[日付]_[教科]_page01.png</code>
+                    </p>
+                </div>
+            </div>
+        </div>
+    `;
+
+    const btn = document.getElementById('btnBookendDownload');
+    btn.addEventListener('click', () => {
+        btn.disabled = true;
+        btn.textContent = '⏳ スキャン中...';
+        document.getElementById('bookendProgressArea').style.display = 'block';
+        document.getElementById('bookendStatus').textContent = '⏳ ページをスキャン中です。タブを切り替えないでください。';
+
+        // 進捗ポーリング
+        const pollInterval = setInterval(() => {
+            chrome.storage.local.get('nichinokenBookendProgress', ({ nichinokenBookendProgress: prog }) => {
+                if (!prog) return;
+
+                if (prog.status === 'scanning') {
+                    document.getElementById('bookendProgressText').textContent =
+                        `📖 ${prog.page} ページをスキャン済み...`;
+                    // shimmerで動いてる感じ
+                    const fill = document.getElementById('bookendProgressFill');
+                    fill.style.width = '60%';
+                    fill.classList.add('shimmer');
+                }
+
+                if (prog.status === 'zipping') {
+                    document.getElementById('bookendProgressText').textContent =
+                        `📦 ${prog.page} ページのダウンロードを準備中...`;
+                    document.getElementById('bookendProgressFill').style.width = '80%';
+                }
+
+                if (prog.status === 'done') {
+                    clearInterval(pollInterval);
+                    document.getElementById('bookendProgressFill').style.width = '100%';
+                    document.getElementById('bookendProgressFill').classList.remove('shimmer');
+                    document.getElementById('bookendProgressText').textContent =
+                        `✅ ${prog.page} ページを保存しました`;
+                    document.getElementById('bookendStatus').textContent =
+                        `✅ ダウンロード完了！（${prog.page}ページ）`;
+                    btn.disabled = false;
+                    btn.textContent = '🖼 再度ダウンロード';
+                    chrome.storage.local.remove('nichinokenBookendProgress');
+                }
+            });
+        }, 500);
+
+        chrome.tabs.sendMessage(tab.id, { action: "downloadBookendImages" });
+    });
+}
+
+// ============================================================
+// スクレイピング結果の処理（既存）
 // ============================================================
 
 function handleScrapeResponse(response) {
     const pageStatus = document.getElementById('pageStatus');
 
-    // 診断ログ表示
     if (response?.logs?.length > 0) {
         document.getElementById('debugSection').style.display = "block";
         document.getElementById('debugLog').textContent = response.logs.join("\n");
@@ -79,7 +509,7 @@ function handleScrapeResponse(response) {
 
     if (!response?.success || !response.data) {
         pageStatus.textContent = `⚠ ${response?.error ?? "不明なエラー"}`;
-        setbadge('エラー', 'badge-error');
+        setBadge('エラー', 'badge-error');
         return;
     }
 
@@ -87,8 +517,7 @@ function handleScrapeResponse(response) {
 
     if (data.dataType === 'collectionStarted') {
         pageStatus.textContent = `⏳ 収集開始しました。完了後にもう一度ポップアップを開いてください。`;
-        setbadge('取得中', 'badge-info');
-        // ポップアップはページ遷移で閉じるため、次回オープン時にストレージから結果を読む
+        setBadge('取得中', 'badge-info');
         return;
     }
 
@@ -98,38 +527,34 @@ function handleScrapeResponse(response) {
         showBulkResults(data);
     } else if (data.dataType === 'fieldAccuracyRate') {
         pageStatus.textContent = `✅ 分野別正答率データを取得しました！`;
-        setbadge('分野別', 'badge-success');
-        
-        document.getElementById('lblTestName').textContent  = "分野別正答率";
-        document.getElementById('lblExamDate').textContent  = data.searchCondition.bracketsText || "--";
-        
+        setBadge('分野別', 'badge-success');
+        document.getElementById('lblTestName').textContent = "分野別正答率";
+        document.getElementById('lblExamDate').textContent = data.searchCondition.bracketsText || "--";
         const cond = data.searchCondition;
-        const condStr = [cond.subject, cond.grade ? cond.grade+"年" : "", cond.term, cond.testType].filter(Boolean).join(" ");
-        document.getElementById('lblSubjects').textContent  = condStr || "--";
-        
+        const condStr = [cond.subject, cond.grade ? cond.grade + "年" : "", cond.term, cond.testType].filter(Boolean).join(" ");
+        document.getElementById('lblSubjects').textContent = condStr || "--";
         document.getElementById('lblSummaryStatus').parentElement.querySelector('.result-label').textContent = "データ件数";
         document.getElementById('lblSummaryStatus').textContent = `✅ ${data.fields.length}行のカテゴリ判定`;
     } else {
         const hasSubjects = data.subjects?.length > 0;
-        const hasSummary  = !!data.summary;
+        const hasSummary = !!data.summary;
 
         if (hasSubjects && hasSummary) {
             pageStatus.textContent = `✅ テストデータを統合取得しました！`;
-            setbadge('統合取得', 'badge-success');
+            setBadge('統合取得', 'badge-success');
         } else if (hasSubjects) {
             pageStatus.textContent = `✅ 問題別データを取得しました（成績集計なし）`;
-            setbadge('問題別のみ', 'badge-info');
+            setBadge('問題別のみ', 'badge-info');
         } else if (hasSummary) {
             pageStatus.textContent = `✅ 成績集計データを取得しました`;
-            setbadge('集計のみ', 'badge-info');
+            setBadge('集計のみ', 'badge-info');
         }
 
-        document.getElementById('lblTestName').textContent  = data.testName || "--";
-        document.getElementById('lblExamDate').textContent  = formatExamDate(data.examDate, data.testDateRaw);
-        document.getElementById('lblSubjects').textContent  = hasSubjects
+        document.getElementById('lblTestName').textContent = data.testName || "--";
+        document.getElementById('lblExamDate').textContent = formatExamDate(data.examDate, data.testDateRaw);
+        document.getElementById('lblSubjects').textContent = hasSubjects
             ? data.subjects.map(s => s.score != null ? `${s.subject}(${s.score})` : s.subject).join('、')
             : "--";
-            
         document.getElementById('lblSummaryStatus').parentElement.querySelector('.result-label').textContent = "成績集計";
         document.getElementById('lblSummaryStatus').textContent =
             hasSummary ? `✅ ${data.summary.examType === 'public' ? '公開模試' : '育成テスト'}` : '❌ なし';
@@ -143,6 +568,20 @@ function handleScrapeResponse(response) {
 // ============================================================
 
 function bindAllEventListeners() {
+
+    // ---- パッケージダウンロード ----
+    document.getElementById('btnFetchPackage').addEventListener('click', () => {
+        executePackageFetch();
+    });
+
+    // ---- パッケージログコピー ----
+    document.getElementById('btnCopyPkgLog').addEventListener('click', () => {
+        navigator.clipboard.writeText(document.getElementById('pkgDebugLog').textContent).then(() => {
+            const btn = document.getElementById('btnCopyPkgLog');
+            btn.textContent = "✅ コピーしました！";
+            setTimeout(() => { btn.textContent = "📋 ログをコピー"; }, 2000);
+        });
+    });
 
     // ---- JSONダウンロード ----
     document.getElementById('btnExtractAndDownload').addEventListener('click', () => {
@@ -183,7 +622,7 @@ function showBulkResults(data) {
     const count = data.combinations.length;
     const totalRows = data.combinations.reduce((s, r) => s + r.fields.length, 0);
     document.getElementById('pageStatus').textContent = `✅ 全組み合わせ取得完了！`;
-    setbadge('分野別(全件)', 'badge-success');
+    setBadge('分野別(全件)', 'badge-success');
     document.getElementById('lblTestName').textContent = "分野別正答率（全組み合わせ）";
     document.getElementById('lblExamDate').textContent = "--";
     document.getElementById('lblSubjects').textContent = `${count}件の条件`;
@@ -191,10 +630,12 @@ function showBulkResults(data) {
     document.getElementById('lblSummaryStatus').textContent = `✅ ${count}条件 / ${totalRows}行`;
 }
 
-function setbadge(text, cls) {
+function setBadge(text, cls) {
     const el = document.getElementById('pageTypeBadge');
-    el.textContent = text;
-    el.className = `badge ${cls}`;
+    if (el) {
+        el.textContent = text;
+        el.className = `badge ${cls}`;
+    }
 }
 
 function formatExamDate(examDate, fallback) {
@@ -212,10 +653,8 @@ function generateFilename(data) {
     }
     if (data.dataType === 'fieldAccuracyRate') {
         const cond = data.searchCondition;
-        const nameParts = ["fields", cond.subject, cond.grade ? cond.grade+"y" : "", cond.termCode, cond.testTypeCode]
-            .filter(Boolean)
-            .join("_")
-            .replace(/[\s\/\\:*?"<>|]/g, '_');
+        const nameParts = ["fields", cond.subject, cond.grade ? cond.grade + "y" : "", cond.termCode, cond.testTypeCode]
+            .filter(Boolean).join("_").replace(/[\s\/\\:*?"<>|]/g, '_');
         const date = new Date().toISOString().slice(0, 10);
         return `nichinoken_${date}_${nameParts}.json`;
     }
@@ -224,11 +663,23 @@ function generateFilename(data) {
     return `nichinoken_${date}_${name}.json`;
 }
 
+function generatePackageFilename(data) {
+    const date = new Date().toISOString().slice(0, 10);
+    return `nichinoken_${date}_package.json`;
+}
+
 function downloadJson(data, filename) {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const objectUrl = URL.createObjectURL(blob);
-    chrome.downloads.download({ url: objectUrl, filename, saveAs: true }, () => {
-        URL.revokeObjectURL(objectUrl);
+    chrome.downloads.download({
+        url: objectUrl,
+        filename,
+        saveAs: false
+    }, (downloadId) => {
+        if (chrome.runtime.lastError) {
+            console.error("Download error:", chrome.runtime.lastError.message);
+        }
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 5000);
     });
 }
 

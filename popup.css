@@ -1,6 +1,6 @@
 /* ============================================================
-   Nichinoken Test Data Extractor v3 — Styles
-   JSON抽出ツール特化デザイン
+   Nichinoken Test Data Extractor v4.0 — Styles
+   パッケージ取得 + 単体抽出 デュアルモード
    ============================================================ */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
@@ -12,7 +12,7 @@
 
 body {
     font-family: 'Inter', 'Helvetica Neue', 'Segoe UI', Arial, sans-serif;
-    width: 480px;
+    width: 500px;
     margin: 0;
     padding: 14px;
     background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
@@ -133,6 +133,105 @@ p {
     margin-bottom: 10px;
 }
 
+/* ---- Section Labels ---- */
+.section-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+}
+
+/* ---- Checkbox / Radio Groups ---- */
+.checkbox-group, .radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.radio-group {
+    flex-direction: row;
+    gap: 12px;
+}
+
+.checkbox-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.4);
+    border: 1px solid rgba(148, 163, 184, 0.08);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.checkbox-item:hover {
+    background: rgba(15, 23, 42, 0.6);
+    border-color: rgba(99, 102, 241, 0.25);
+}
+
+.checkbox-item input[type="checkbox"],
+.checkbox-item input[type="radio"] {
+    margin-top: 2px;
+    accent-color: #6366f1;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.checkbox-label {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    font-size: 12px;
+    color: #e2e8f0;
+    cursor: pointer;
+}
+
+.test-name {
+    font-weight: 600;
+    font-size: 12px;
+    color: #f1f5f9;
+}
+
+.test-meta {
+    font-size: 10px;
+    color: #64748b;
+    font-weight: 400;
+}
+
+/* ---- Progress Bar ---- */
+.progress-bar {
+    width: 100%;
+    height: 6px;
+    background: rgba(15, 23, 42, 0.6);
+    border-radius: 3px;
+    overflow: hidden;
+    border: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #6366f1, #818cf8, #a78bfa);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+}
+
+@keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+.progress-text {
+    font-size: 11px;
+    color: #94a3b8;
+    margin-top: 4px;
+    margin-bottom: 0;
+}
+
 /* ---- Result Grid ---- */
 .result-grid {
     display: grid;
@@ -212,6 +311,12 @@ p {
 .btn.primary:active {
     transform: translateY(0);
 }
+.btn.primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
 
 .btn.outline {
     background: transparent;
@@ -231,8 +336,6 @@ p {
     background: rgba(248, 113, 113, 0.1);
     border-color: rgba(248, 113, 113, 0.6);
 }
-
-
 
 /* ---- Debug / Diagnostic ---- */
 .debug-summary {
@@ -298,4 +401,110 @@ p {
 }
 ::-webkit-scrollbar-thumb:hover {
     background: rgba(148, 163, 184, 0.35);
+}
+
+/* ---- Guide Box ---- */
+.guide-box {
+    margin-top: 14px;
+    padding: 10px 12px;
+    background: rgba(99, 102, 241, 0.08);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    border-radius: 8px;
+    font-size: 12px;
+}
+
+.guide-compact {
+    margin-top: 10px;
+}
+
+.guide-title {
+    font-weight: 600;
+    font-size: 12px;
+    margin-bottom: 8px;
+    color: #c4b5fd;
+}
+
+.guide-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11.5px;
+    line-height: 1.5;
+}
+
+.guide-table tr {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.guide-table tr:last-child {
+    border-bottom: none;
+}
+
+.guide-table td {
+    padding: 3px 4px;
+    vertical-align: middle;
+}
+
+.guide-icon {
+    width: 22px;
+    text-align: center;
+}
+
+.guide-auto {
+    width: 36px;
+    text-align: right;
+    color: #86efac;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+.guide-manual {
+    width: 36px;
+    text-align: right;
+    color: #fbbf24;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+.guide-detail {
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.guide-detail-title {
+    cursor: pointer;
+    font-size: 11.5px;
+    color: #93c5fd;
+    font-weight: 500;
+}
+
+.guide-detail-title:hover {
+    color: #bfdbfe;
+}
+
+.guide-steps {
+    margin: 6px 0 0;
+    padding-left: 18px;
+    font-size: 11px;
+    color: #cbd5e1;
+    line-height: 1.7;
+}
+
+.guide-steps li {
+    margin-bottom: 2px;
+}
+
+.guide-steps strong {
+    color: #e2e8f0;
+}
+
+.guide-hint {
+    font-size: 11.5px;
+    color: #94a3b8;
+    margin: 0;
+    line-height: 1.6;
+}
+
+.guide-hint strong {
+    color: #c4b5fd;
 }

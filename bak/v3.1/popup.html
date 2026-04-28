@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Nichinoken Test Data Extractor</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="container">
+        <header class="app-header">
+            <h1>&#x1F4CB; 日能研テストデータ抽出</h1>
+            <span class="version-badge">v3.1</span>
+        </header>
+
+        <!-- データ抽出 -->
+        <div id="statusArea" class="card card-primary">
+            <div class="card-header">
+                <h2>データ抽出</h2>
+                <span id="pageTypeBadge" class="badge badge-neutral">検出中...</span>
+            </div>
+            <p id="pageStatus" class="status-text">ページを確認しています...</p>
+
+            <!-- 抽出結果サマリー -->
+            <div id="extractResult" style="display: none;">
+                <div class="result-grid">
+                    <div class="result-item">
+                        <span class="result-label">テスト名</span>
+                        <span id="lblTestName" class="result-value"></span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">実施日</span>
+                        <span id="lblExamDate" class="result-value"></span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">教科</span>
+                        <span id="lblSubjects" class="result-value"></span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">成績集計</span>
+                        <span id="lblSummaryStatus" class="result-value"></span>
+                    </div>
+                </div>
+
+                <div class="actions-main">
+                    <button id="btnExtractAndDownload" class="btn primary large">
+                        &#x1F4E5; JSONをダウンロード
+                    </button>
+                </div>
+            </div>
+
+            <details id="debugSection" style="display: none; margin-top: 12px;">
+                <summary class="debug-summary">&#x1F50D; 診断ログ</summary>
+                <pre id="debugLog" class="debug-log"></pre>
+                <button id="btnCopyLog" class="btn small outline" style="margin-top: 6px;">&#x1F4CB; ログをコピー</button>
+            </details>
+        </div>
+
+        <!-- JSONプレビュー -->
+        <div id="previewCard" class="card" style="display: none;">
+            <div class="card-header">
+                <h2>JSONプレビュー</h2>
+                <div class="preview-actions">
+                    <button id="btnCopyJson" class="btn small outline">&#x1F4CB; コピー</button>
+                    <button id="btnClosePreview" class="btn small outline">✕ 閉じる</button>
+                </div>
+            </div>
+            <pre id="jsonPreview" class="json-preview"></pre>
+        </div>
+    </div>
+    <script src="popup.js"></script>
+</body>
+</html>

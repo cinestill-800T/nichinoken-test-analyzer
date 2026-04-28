@@ -4,6 +4,47 @@
 // ============================================================
 
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+
+    // ============================================================
+    // テスト一覧スキャン（トップページ用）
+    // ============================================================
+    if (request.action === "scanTestList") {
+        try {
+            const tests = parseTestListFromTopPage(document);
+            sendResponse({ success: true, tests });
+        } catch (e) {
+            sendResponse({ success: false, error: e.message });
+        }
+        return true;
+    }
+
+    // ============================================================
+    // パッケージ一括取得
+    // ============================================================
+    if (request.action === "fetchTestPackage") {
+        // 即座に開始応答を返し、結果はchrome.storage経由で渡す
+        sendResponse({ success: true, status: 'started' });
+        fetchTestPackageFlow(request.config).catch(e => {
+            chrome.storage.local.set({
+                nichinokenPackageProgress: {
+                    status: 'error',
+                    error: e.message,
+                    timestamp: Date.now()
+                }
+            });
+        });
+        return true;
+    }
+
+    if (request.action === "downloadBookendImages") {
+        downloadBookendImagesFlow().then(() => {
+            sendResponse({ success: true });
+        }).catch(e => {
+            sendResponse({ success: false, error: e.message });
+        });
+        return true;
+    }
+
     if (request.action === "scrapeAllData") {
         if (document.querySelector('.CorrectAnswerRate_table')) {
             if (request.mode === 'allCombinations') {
@@ -798,6 +839,102 @@ function _submitFormWithCombo(combo) {
     else formEl.submit();
 }
 
+// ============================================================
+// Bookend 画像ダウンロード
+// ============================================================
+
+async function downloadBookendImagesFlow() {
+    const canvas = document.querySelector('canvas#canvas');
+    if (!canvas) {
+        throw new Error("Canvasが見つかりません。Bookendビューアが完全に読み込まれるまでお待ちください。");
+    }
+
+    // URLパラメータからテスト情報を推定
+    const urlParams = new URLSearchParams(window.location.search);
+    const parentUrl = document.referrer || '';
+    const parentParams = new URLSearchParams(new URL(parentUrl || 'https://dummy.com').search);
+    
+    const examDate = parentParams.get('exam_date') || urlParams.get('exam_date') || '';
+    const examKnd = parentParams.get('exam_knd') || urlParams.get('exam_knd') || '';
+    const subjectCode = parentParams.get('subject') || urlParams.get('subject') || '';
+    
+    const kndLabel = { P: 'kokai', N: 'ikusei', S: 'koushu' }[examKnd] || 'test';
+    const subjLabel = { K: 'kokugo', M: 'sansu', S: 'shakai', R: 'rika' }[subjectCode] || 'mondai';
+    
+    const prefix = `${kndLabel}_${examDate}_${subjLabel}`;
+
+    let images = [];
+    let maxRetries = 50;
+    
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    
+    const pressRight = () => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', keyCode: 39, bubbles: true }));
+    };
+
+    // 進捗通知
+    const updateProgress = async (page, status) => {
+        await chrome.storage.local.set({
+            nichinokenBookendProgress: {
+                status,
+                page,
+                prefix,
+                timestamp: Date.now()
+            }
+        });
+    };
+
+    await updateProgress(0, 'scanning');
+
+    for (let i = 0; i < maxRetries; i++) {
+        const dataURL = canvas.toDataURL('image/png');
+        if (images.includes(dataURL)) {
+            break;
+        }
+        images.push(dataURL);
+        await updateProgress(images.length, 'scanning');
+        
+        pressRight();
+        await sleep(1500); 
+    }
+
+    // ZIP生成
+    await updateProgress(images.length, 'zipping');
+
+    // data URLをblobに変換
+    function dataUrlToBlob(dataUrl) {
+        const parts = dataUrl.split(',');
+        const mime = parts[0].match(/:(.*?);/)[1];
+        const raw = atob(parts[1]);
+        const arr = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+        return new Blob([arr], { type: mime });
+    }
+
+    // JSZipが使えるか確認（content scriptでは基本使えないのでa.downloadでZIP生成）
+    // 代替: 個別ダウンロードだが意味のあるファイル名で
+    for (let i = 0; i < images.length; i++) {
+        const pageNum = String(i + 1).padStart(2, '0');
+        const filename = `${prefix}_page${pageNum}.png`;
+        
+        const link = document.createElement('a');
+        link.download = filename;
+        link.href = images[i];
+        link.click();
+        
+        await sleep(200);
+    }
+
+    await chrome.storage.local.set({
+        nichinokenBookendProgress: {
+            status: 'done',
+            page: images.length,
+            prefix,
+            timestamp: Date.now()
+        }
+    });
+}
+
 // ページリロードをまたいで収集を継続する（auto-runから呼ばれる）
 async function _continueCollection(state) {
     const { combinations, index, results } = state;
@@ -834,3 +971,319 @@ async function _continueCollection(state) {
         }
     } catch (e) {}
 })();
+
+// ============================================================
+// トップページ テスト一覧解析
+// ============================================================
+
+function parseTestListFromTopPage(doc) {
+    const tests = [];
+    const testMap = new Map();
+
+    // テスト一覧テーブル内のすべてのリンクを取得
+    const allLinks = doc.querySelectorAll('a[href]');
+
+    allLinks.forEach(link => {
+        const href = link.href || '';
+        const text = link.textContent.trim();
+
+        // 科目ボタン: exam-type を含むリンク
+        if (href.includes('exam-type')) {
+            try {
+                const url = new URL(href);
+                const examDate = url.searchParams.get('exam_date');
+                const examKnd = url.searchParams.get('exam_knd');
+                const subject = url.searchParams.get('subject');
+                const key = `${examDate}_${examKnd}`;
+
+                if (!testMap.has(key)) {
+                    // 親の行からテスト名を取得
+                    const row = link.closest('tr');
+                    let testName = key;
+                    if (row) {
+                        const firstCell = row.querySelector('td');
+                        if (firstCell) testName = firstCell.textContent.trim();
+                    }
+                    testMap.set(key, {
+                        key,
+                        testName,
+                        examDate,
+                        examKnd,
+                        subjects: {},
+                        resultsUrl: null
+                    });
+                }
+
+                const subjectLabels = { K: '国語', M: '算数', S: '社会', R: '理科' };
+                const test = testMap.get(key);
+                if (subject) {
+                    test.subjects[subject] = {
+                        label: subjectLabels[subject] || text,
+                        baseUrl: href
+                    };
+                }
+            } catch (e) { /* ignore parse errors */ }
+        }
+
+        // 成績ボタン
+        if (text === '成績' && href && !href.includes('javascript:')) {
+            const row = link.closest('tr');
+            if (row) {
+                const examLink = row.querySelector('a[href*="exam-type"]');
+                if (examLink) {
+                    try {
+                        const url = new URL(examLink.href);
+                        const key = `${url.searchParams.get('exam_date')}_${url.searchParams.get('exam_knd')}`;
+                        if (testMap.has(key)) {
+                            testMap.get(key).resultsUrl = href;
+                        }
+                    } catch (e) { /* ignore */ }
+                }
+            }
+        }
+    });
+
+    return Array.from(testMap.values());
+}
+
+// ============================================================
+// URL ユーティリティ
+// ============================================================
+
+function buildUrlWithExamTran(baseUrl, examTran) {
+    try {
+        const url = new URL(baseUrl);
+        url.searchParams.set('exam_tran', examTran);
+        return url.toString();
+    } catch (e) {
+        return baseUrl;
+    }
+}
+
+// ============================================================
+// パッケージ一括取得フロー
+// ============================================================
+
+async function fetchTestPackageFlow(config) {
+    const { tests, options } = config;
+    const results = [];
+    let totalSteps = 0;
+    let completedSteps = 0;
+    const logs = [];
+
+    logs.push(`[START] パッケージ取得開始: ${tests.length}件のテスト`);
+
+    // 総ステップ数を計算
+    for (const test of tests) {
+        const subjectCount = Object.keys(test.subjects).length;
+        if (options.correctionList) totalSteps += subjectCount;
+        if (options.commentary) totalSteps += subjectCount;
+        if (options.results) totalSteps += 1;
+    }
+
+    const updateProgress = async (detail) => {
+        await chrome.storage.local.set({
+            nichinokenPackageProgress: {
+                status: 'collecting',
+                completed: completedSteps,
+                total: totalSteps,
+                detail,
+                timestamp: Date.now()
+            }
+        });
+    };
+
+    for (const test of tests) {
+        const testResult = {
+            testName: test.testName,
+            examDate: test.examDate,
+            examKnd: test.examKnd,
+            subjects: [],
+            summary: null,
+            commentary: {},
+            answerPdfUrls: {}
+        };
+
+        // ---- 正誤一覧（各教科）----
+        if (options.correctionList) {
+            for (const [subjectCode, subjectInfo] of Object.entries(test.subjects)) {
+                await updateProgress(`${test.testName} - ${subjectInfo.label} 正誤一覧`);
+                logs.push(`[FETCH] ${test.testName} ${subjectInfo.label} 正誤一覧`);
+
+                try {
+                    const sdcUrl = buildUrlWithExamTran(subjectInfo.baseUrl, 'SDC');
+                    const response = await fetchWithTimeout(sdcUrl, { credentials: "include" });
+
+                    if (response.ok) {
+                        const html = await response.text();
+                        const doc = new DOMParser().parseFromString(html, "text/html");
+
+                        // 既存のスクレイプ関数を利用
+                        try {
+                            const data = scrapeDataFromDoc(doc);
+                            testResult.subjects.push(data);
+                            logs.push(`[OK] ${subjectInfo.label}: ${data.questions.length}問`);
+                        } catch (parseErr) {
+                            logs.push(`[WARN] ${subjectInfo.label} パース失敗: ${parseErr.message}`);
+                        }
+
+                        // 解答・解説リンクを科目ごとに抽出
+                        const subLinks = extractSubLinksPerSubject(doc, subjectCode);
+                        if (subLinks.commentaryUrl) {
+                            testResult._commentaryUrls = testResult._commentaryUrls || {};
+                            testResult._commentaryUrls[subjectCode] = subLinks.commentaryUrl;
+                        }
+                        if (subLinks.answerUrl) {
+                            testResult.answerPdfUrls[subjectInfo.label] = subLinks.answerUrl;
+                        }
+                    } else {
+                        logs.push(`[ERROR] ${subjectInfo.label} HTTP ${response.status}`);
+                    }
+                } catch (e) {
+                    logs.push(`[ERROR] ${subjectInfo.label}: ${e.message}`);
+                }
+
+                completedSteps++;
+                await new Promise(r => setTimeout(r, 300));
+            }
+        }
+
+        // ---- 解説テキスト（各教科）----
+        if (options.commentary && testResult._commentaryUrls) {
+            for (const [subjCode, commentaryUrl] of Object.entries(testResult._commentaryUrls)) {
+                const subjLabel = { K: '国語', M: '算数', S: '社会', R: '理科' }[subjCode] || subjCode;
+                await updateProgress(`${test.testName} - ${subjLabel} 解説`);
+                logs.push(`[FETCH] ${test.testName} ${subjLabel} 解説`);
+
+                try {
+                    const response = await fetchWithTimeout(commentaryUrl, { credentials: "include" });
+                    if (response.ok) {
+                        const html = await response.text();
+                        const doc = new DOMParser().parseFromString(html, "text/html");
+                        const commentaryText = extractCommentaryText(doc);
+                        testResult.commentary[subjLabel] = {
+                            subject: subjLabel,
+                            url: commentaryUrl,
+                            text: commentaryText,
+                            htmlRaw: html
+                        };
+                        logs.push(`[OK] ${subjLabel} 解説: ${commentaryText.length}文字`);
+                    } else {
+                        logs.push(`[ERROR] ${subjLabel} 解説 HTTP ${response.status}`);
+                    }
+                } catch (e) {
+                    logs.push(`[ERROR] ${subjLabel} 解説: ${e.message}`);
+                }
+
+                completedSteps++;
+                await new Promise(r => setTimeout(r, 300));
+            }
+        }
+
+        // ---- 成績集計 ----
+        if (options.results) {
+            await updateProgress(`${test.testName} - 成績集計`);
+            logs.push(`[FETCH] ${test.testName} 成績集計`);
+
+            let resultsUrl = test.resultsUrl;
+
+            // resultsUrl がなければ、いずれかの科目URLから RD で構築
+            if (!resultsUrl) {
+                const firstSubject = Object.values(test.subjects)[0];
+                if (firstSubject) {
+                    resultsUrl = buildUrlWithExamTran(firstSubject.baseUrl, 'RD');
+                }
+            }
+
+            if (resultsUrl) {
+                try {
+                    const response = await fetchWithTimeout(resultsUrl, { credentials: "include" });
+                    if (response.ok) {
+                        const html = await response.text();
+                        const doc = new DOMParser().parseFromString(html, "text/html");
+                        const bodyId = doc.body?.id || '';
+                        try {
+                            testResult.summary = scrapeSummaryFromDocAuto(doc, bodyId);
+                            logs.push(`[OK] 成績集計: ${testResult.summary.examType}`);
+                        } catch (parseErr) {
+                            logs.push(`[WARN] 成績パース失敗: ${parseErr.message}`);
+                        }
+                    } else {
+                        logs.push(`[ERROR] 成績 HTTP ${response.status}`);
+                    }
+                } catch (e) {
+                    logs.push(`[ERROR] 成績: ${e.message}`);
+                }
+            }
+
+            completedSteps++;
+        }
+
+        // 内部プロパティを削除
+        delete testResult._subLinks;
+        delete testResult._commentaryUrls;
+        results.push(testResult);
+    }
+
+    logs.push(`[DONE] パッケージ取得完了: ${results.length}件`);
+
+    // 結果をchrome.storageに保存（popup側で読み取る）
+    await chrome.storage.local.set({
+        nichinokenPackageProgress: {
+            status: 'done',
+            completed: totalSteps,
+            total: totalSteps,
+            detail: '全データ取得完了',
+            timestamp: Date.now()
+        },
+        nichinokenPackageResult: {
+            success: true,
+            results,
+            logs,
+            timestamp: Date.now()
+        }
+    });
+
+    return { success: true };
+}
+
+// ============================================================
+// 詳細ページからサブリンク（問題/解答/解説）を科目ごとに抽出
+// ============================================================
+
+function extractSubLinksPerSubject(doc, subjectCode) {
+    const links = {};
+    doc.querySelectorAll('a[href]').forEach(a => {
+        const text = a.textContent.trim();
+        const href = a.href || a.getAttribute('href') || '';
+        // 解答PDF（科目共通のことが多い）
+        if (text === '解答' && href.includes('sample-answer')) {
+            links.answerUrl = href.startsWith('http') ? href : new URL(href, window.location.origin).href;
+        }
+        // 解説（科目コードが含まれるURL）
+        if (text === '解説' && href.includes('answerguide-commentary') && !href.includes('#')) {
+            links.commentaryUrl = href.startsWith('http') ? href : new URL(href, window.location.origin).href;
+        }
+    });
+    return links;
+}
+
+// ============================================================
+// 解説ページからテキストを抽出
+// ============================================================
+
+function extractCommentaryText(doc) {
+    // body全体のテキストを取得（ナビなど不要な部分を除外）
+    const body = doc.body;
+    if (!body) return '';
+
+    // scriptタグとstyleタグを除外
+    const clone = body.cloneNode(true);
+    clone.querySelectorAll('script, style, nav, header, footer').forEach(el => el.remove());
+
+    // テキストを取得してクリーンアップ
+    let text = clone.textContent || '';
+    // 連続する空白行を1つに
+    text = text.replace(/\n{3,}/g, '\n\n').trim();
+    return text;
+}
